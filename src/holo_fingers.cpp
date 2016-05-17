@@ -33,6 +33,7 @@
 #include <holo_fingers/holo_fingers.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/crop_box.h>
+#include <pcl/search/kdtree.h>
 
 namespace holo_fingers
 {
@@ -50,6 +51,7 @@ HoloFingers::HoloFingers(const std::string name_space)
     /* nh_->param<std::vector<double> >("translation", trasl, {0, 0, 0}); */
     /* nh_->param<std::vector<double> >("rotation", rot, {0, 0, 0, 1}); */
     marks_ = boost::make_shared<visualization_msgs::MarkerArray>();
+    nh_->param<float>("pass", pass, 0.015);
 }
 
 void HoloFingers::publishMarkers()
@@ -68,6 +70,7 @@ void HoloFingers::publishMarkers()
 void HoloFingers::spinOnce()
 {
     ros::spinOnce();
+    segment();
     measure();
     createMarkers();
     publishMarkers();
@@ -145,51 +148,91 @@ void HoloFingers::createMarkers()
 
 void  HoloFingers::segment()
 {
-    if(!cloud_)
+    if(!cloud_ || !nh_)
         return;
-    Eigen::Vector4f min, max;
+    nh_->param<float>("pass", pass, 0.015);
+    Eigen::Vector4f min, max, wmin, wmax;
     pcl::getMinMax3D(*cloud_,min,max);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr tmp = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr fingers = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-    pcl::PassThrough<pcl::PointXYZRGB> pass(true);
-    index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-    thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+    pcl::CropBox<pcl::PointXYZRGB> cb;
+    index_.reset();
+    thumb_.reset();
+    wmin = min;
+    wmax = max;
     //segment two finger tips for now (index,thumb)
-    for(size_t i=0; i<2; ++i)
+    for(float y=max[1]; y>=min[1]; y -= pass)
     {
-        pass.setFilterFieldName("y");
-        pass.setFilterLimits(max[1]-0.025, max[1]);
-        pass.setInputCloud(cloud_);
-        pass.filter(*tmp);
-        pcl::getMinMax3D(*tmp,min,max);
-        pass.setFilterFieldName("z");
-        pass.setFilterLimits(min[2], min[2]+0.02);
-        pass.setInputCloud(tmp);
-        pass.filter(*fingers);
-        pcl::getMinMax3D(*fingers,min,max);
-        pass.setFilterFieldName("x");
-        if (i==0){
-            pass.setFilterLimits(min[0], min[0]+0.025);
-            pass.setInputCloud(fingers);
-            pass.filter(*index_);
-            pcl::getMinMax3D(*index_,min,max);
-            pcl::CropBox<pcl::PointXYZRGB> cb;
-            cb.setMin(min);
-            cb.setMax(max);
+        wmin[1] = y - pass;
+        wmax[1] = y;
+        for(float z=min[2]; z<=max[2]; z += pass)
+        {
+            wmin[2] = z;
+            wmax[2] = z + pass;
+            cb.setMin(wmin);
+            cb.setMax(wmax);
             cb.setInputCloud(cloud_);
-            cb.setNegative(true);
-            cb.filter(*fingers);
-            cloud_ = fingers;
-            continue;
+            cb.filter(*tmp);
+            if(!tmp->empty() && !index_){
+                pcl::search::KdTree<pcl::PointXYZRGB> tree;
+                tree.setInputCloud(tmp);
+                pcl::PointXYZRGB pt;
+                pt.y = y - pass*0.5;
+                pt.z = z + pass*0.5;
+                for (float x=min[0]; x<=max[0]; x+=(pass/4))
+                {
+                    std::vector<int> kid;
+                    std::vector<float> kdist;
+                    pt.x = x;
+                    tree.radiusSearch(pt,pass*0.5,kid,kdist,1);
+                    if (kid.size()>0){
+                        index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                        while (kid.size()>0 && !tmp->empty())
+                        {
+                            int id = kid[0];
+                            tree.setInputCloud(tmp);
+                            tree.radiusSearch(*tmp, id, 0.005, kid, kdist, 1);
+                            index_->push_back(tmp->points[id]);
+                            pcl::PointCloud<pcl::PointXYZRGB>::iterator it =
+                                tmp->begin()+id;
+                            tmp->erase(it);
+                        }
+                        break;
+                    }
+                }
+            }
+            if(!tmp->empty() && !thumb_){
+                pcl::search::KdTree<pcl::PointXYZRGB> tree;
+                tree.setInputCloud(tmp);
+                pcl::PointXYZRGB pt;
+                pt.y = y - pass*0.5;
+                pt.z = z + pass*0.5;
+                for (float x=max[0]; x>=min[0]; x-=(pass/4))
+                {
+                    std::vector<int> kid;
+                    std::vector<float> kdist;
+                    pt.x = x;
+                    tree.radiusSearch(pt,pass*0.5,kid,kdist,1);
+                    if (kid.size()>0){
+                        thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                        while (kid.size()>0 && !tmp->empty())
+                        {
+                            int id = kid[0];
+                            tree.setInputCloud(tmp);
+                            tree.radiusSearch(*tmp, id, 0.005, kid, kdist, 1);
+                            thumb_->push_back(tmp->points[id]);
+                            pcl::PointCloud<pcl::PointXYZRGB>::iterator it =
+                                tmp->begin()+id;
+                            tmp->erase(it);
+                        }
+                        break;
+                    }
+                }
+            }
+            if (thumb_ && index_)
+                break;
         }
-        else if (i==1){
-            pass.setFilterLimits(max[0]-0.025, max[0]);
-            pass.setInputCloud(fingers);
-            pass.filter(*thumb_);
-        }
-        else{
-            //Error
-        }
+        if (thumb_ && index_)
+            break;
     }
 }
 
