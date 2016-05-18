@@ -37,9 +37,9 @@
 #include <pcl/point_types.h>
 #include <pcl/common/common.h>
 #include <pcl/common/impl/common.hpp>
+#include <pcl/octree/octree_pointcloud_adjacency.h>
 #include <pcl/common/centroid.h>
 #include <pcl_ros/point_cloud.h>
-#include <pcl/segmentation/extract_clusters.h>
 #include <sensor_msgs/point_cloud_conversion.h>
 #include <ros/console.h>
 #include <ros/common.h>
@@ -85,7 +85,11 @@ namespace holo_fingers
         tf::TransformListener listener_;
 
         std::string topic_, frame_;
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_, index_, thumb_;
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_;
+        typedef pcl::octree::OctreePointCloudAdjacency<pcl::PointXYZRGB>::VoxelAdjacencyList AdjacencyList;
+        AdjacencyList graph;
+        typedef pcl::octree::OctreePointCloudAdjacency<pcl::PointXYZRGB>::VoxelID VertDesc;
+        typedef pcl::octree::OctreePointCloudAdjacency<pcl::PointXYZRGB>::EdgeID EdgeDesc;
         //Params
         float pass;
     };

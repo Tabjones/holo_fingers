@@ -29,7 +29,7 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
 )
 
-find_package(PCL 1.7.2 COMPONENTS common segmentation sample_consensus search REQUIRED)
+find_package(PCL 1.7.2 COMPONENTS common segmentation sample_consensus search octree REQUIRED)
 add_definitions(${PCL_DEFINITIONS})
 link_directories(${PCL_LIBRARY_DIRS})
 
@@ -126,7 +126,7 @@ add_executable(holo_fingers_node
 ## Specify libraries to link a library or executable target against
 target_link_libraries(holo_fingers
   ${catkin_LIBRARIES} ${PCL_COMMON_LIBRARIES} ${PCL_SAMPLE_CONSENSUS_LIBRARIES}
-  ${PCL_SEARCH_LIBRARIES} ${PCL_SEGMENTATION_LIBRARIES}
+  ${PCL_SEARCH_LIBRARIES} ${PCL_SEGMENTATION_LIBRARIES} ${PCL_OCTREE_LIBRARIES}
 )
 
 target_link_libraries(holo_fingers_node
