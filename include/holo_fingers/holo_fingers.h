@@ -39,6 +39,7 @@
 #include <pcl/common/impl/common.hpp>
 #include <pcl/common/centroid.h>
 #include <pcl_ros/point_cloud.h>
+#include <pcl/segmentation/extract_clusters.h>
 #include <sensor_msgs/point_cloud_conversion.h>
 #include <ros/console.h>
 #include <ros/common.h>

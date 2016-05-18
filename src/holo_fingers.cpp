@@ -154,7 +154,7 @@ void  HoloFingers::segment()
     Eigen::Vector4f min, max, wmin, wmax;
     pcl::getMinMax3D(*cloud_,min,max);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr tmp = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-    pcl::CropBox<pcl::PointXYZRGB> cb;
+    pcl::CropBox<pcl::PointXYZRGB> cb(true);
     index_.reset();
     thumb_.reset();
     wmin = min;
@@ -172,59 +172,89 @@ void  HoloFingers::segment()
             cb.setMax(wmax);
             cb.setInputCloud(cloud_);
             cb.filter(*tmp);
-            if(!tmp->empty() && !index_){
-                pcl::search::KdTree<pcl::PointXYZRGB> tree;
-                tree.setInputCloud(tmp);
-                pcl::PointXYZRGB pt;
-                pt.y = y - pass*0.5;
-                pt.z = z + pass*0.5;
-                for (float x=min[0]; x<=max[0]; x+=(pass/4))
-                {
-                    std::vector<int> kid;
-                    std::vector<float> kdist;
-                    pt.x = x;
-                    tree.radiusSearch(pt,pass*0.5,kid,kdist,1);
-                    if (kid.size()>0){
+            pcl::IndicesConstPtr indices = cb.getRemovedIndices();
+            pcl::PointCloud<pcl::PointXYZRGB>::Ptr leftover = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+            pcl::copyPointCloud(*cloud_, *indices, *leftover);
+            cloud_ = leftover;
+            if(!tmp->empty() && (!index_ || !thumb_)){
+                pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
+                ec.setInputCloud(tmp);
+                ec.setClusterTolerance(0.004);
+                ec.setMinClusterSize(50);
+                std::vector<pcl::PointIndices> clusters;
+                ec.extract(clusters);
+                if (clusters.empty())
+                    continue;
+                else if (clusters.size()==1){
+                    if(!index_){
+                        //temporary save this finger in index
                         index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-                        while (kid.size()>0 && !tmp->empty())
-                        {
-                            int id = kid[0];
-                            tree.setInputCloud(tmp);
-                            tree.radiusSearch(*tmp, id, 0.005, kid, kdist, 1);
-                            index_->push_back(tmp->points[id]);
-                            pcl::PointCloud<pcl::PointXYZRGB>::iterator it =
-                                tmp->begin()+id;
-                            tmp->erase(it);
-                        }
-                        break;
+                        pcl::copyPointCloud(*tmp, clusters[0], *index_);
+                    }
+                    else{
+                        thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                        pcl::copyPointCloud(*tmp, clusters[0], *thumb_);
                     }
                 }
-            }
-            if(!tmp->empty() && !thumb_){
-                pcl::search::KdTree<pcl::PointXYZRGB> tree;
-                tree.setInputCloud(tmp);
-                pcl::PointXYZRGB pt;
-                pt.y = y - pass*0.5;
-                pt.z = z + pass*0.5;
-                for (float x=max[0]; x>=min[0]; x-=(pass/4))
-                {
-                    std::vector<int> kid;
-                    std::vector<float> kdist;
-                    pt.x = x;
-                    tree.radiusSearch(pt,pass*0.5,kid,kdist,1);
-                    if (kid.size()>0){
+                else if (clusters.size()==2){
+                    if (!thumb_){
                         thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-                        while (kid.size()>0 && !tmp->empty())
-                        {
-                            int id = kid[0];
-                            tree.setInputCloud(tmp);
-                            tree.radiusSearch(*tmp, id, 0.005, kid, kdist, 1);
-                            thumb_->push_back(tmp->points[id]);
-                            pcl::PointCloud<pcl::PointXYZRGB>::iterator it =
-                                tmp->begin()+id;
-                            tmp->erase(it);
+                        if (!index_)
+                            pcl::copyPointCloud(*tmp, clusters[1], *thumb_);
+                        if (index_)
+                            pcl::copyPointCloud(*tmp, clusters[0], *thumb_);
+                    }
+                    if(!index_){
+                        index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                        pcl::copyPointCloud(*tmp, clusters[0], *index_);
+                    }
+                }
+                else{
+                    ROS_WARN("[HoloFingers::%s]\tFound more then two fingers... Change hand configuration!",__func__);
+                    ROS_WARN("[HoloFingers::%s]\tKeeping the largest two",__func__);
+                    size_t f(0), t(0);
+                    if (clusters[0].indices.size() > clusters[1].indices.size()){
+                        f = 0;
+                        t = 1;
+                    }
+                    else{
+                        f=1;
+                        t=0;
+                    }
+                    for(size_t i=2; i<clusters.size(); ++i)
+                    {
+                        if(clusters[i].indices.size() >= clusters[f].indices.size()){
+                            t = f;
+                            f = i;
                         }
-                        break;
+                        else if(clusters[i].indices.size() > clusters[t].indices.size())
+                            t = i;
+                    }
+                    if(!thumb_){
+                        thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                        if (!index_)
+                            pcl::copyPointCloud(*tmp, clusters[t], *thumb_);
+                        if (index_)
+                            pcl::copyPointCloud(*tmp, clusters[f], *thumb_);
+                    }
+                    if(!index_){
+                        index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                        pcl::copyPointCloud(*tmp, clusters[f], *index_);
+                    }
+                }
+                if (index_ && thumb_){
+                    //check if fingers need to be swapped
+                    Eigen::Vector4f tmin, tmax;
+                    pcl::getMinMax3D(*index_,tmin,tmax);
+                    float index_x = tmin[0];
+                    pcl::getMinMax3D(*thumb_,tmin,tmax);
+                    if (index_x > tmin[0]){
+                        //swap
+                        pcl::PointCloud<pcl::PointXYZRGB>::Ptr tmp2 =
+                            boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                        tmp2 = index_;
+                        index_ = thumb_;
+                        thumb_ = tmp2;
                     }
                 }
             }
