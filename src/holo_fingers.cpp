@@ -44,11 +44,11 @@ HoloFingers::HoloFingers(const std::string name_space)
     /* nh_->param<std::string>("reference_frame", frame_, "/qb_delta_base"); */
     sub_ = nh_->subscribe(nh_->resolveName(topic_), 1, &HoloFingers::cbCloud, this);
     srv_calib_ = nh_->advertiseService("calibrate", &HoloFingers::cbCalib, this);
-    pub_ = nh_->advertise<visualization_msgs::MarkerArray>("distance_markers", 1);
+    pub_ = nh_->advertise<visualization_msgs::MarkerArray>("distance_markers", 0);
+    pub_cloud = nh_->advertise<pcl::PointCloud<pcl::PointXYZRGB> >("supervoxels", 0);
     /* nh_->param<std::vector<double> >("translation", trasl, {0, 0, 0}); */
     /* nh_->param<std::vector<double> >("rotation", rot, {0, 0, 0, 1}); */
     marks_ = boost::make_shared<visualization_msgs::MarkerArray>();
-    nh_->param<float>("pass", pass, 0.015);
 }
 
 void HoloFingers::publishMarkers()
@@ -63,6 +63,10 @@ void HoloFingers::publishMarkers()
             }
             pub_.publish(*marks_);
         }
+    if (vx_cloud_){
+        vx_cloud_->header.frame_id = cloud_->header.frame_id;
+        pub_cloud.publish(*vx_cloud_);
+    }
 }
 void HoloFingers::spinOnce()
 {
@@ -98,61 +102,52 @@ void HoloFingers::createMarkers()
     zaxis.lifetime=ros::Duration(1.0);
     marks_->markers.push_back(zaxis);
 
-    /* visualization_msgs::Marker index; */
-    /* index.ns="index"; */
-    /* index.id=0; */
-    /* index.type=visualization_msgs::Marker::POINTS; */
-    /* index.action=visualization_msgs::Marker::ADD; */
-    /* index.scale.x = 0.005; */
-    /* index.scale.y = 0.005; */
-    /* for (size_t i=0; i<index_->size(); ++i) */
-    /* { */
-    /*     pt.x = index_->points[i].x; */
-    /*     pt.y = index_->points[i].y; */
-    /*     pt.z = index_->points[i].z; */
-    /*     std_msgs::ColorRGBA cl; */
-    /*     cl.r=0; */
-    /*     cl.g=1; */
-    /*     cl.b=0; */
-    /*     cl.a=1; */
-    /*     index.points.push_back(pt); */
-    /*     index.colors.push_back(cl); */
-    /* } */
-    /* index.lifetime=ros::Duration(1.0); */
-    /* marks_->markers.push_back(index); */
-    /* visualization_msgs::Marker thumb; */
-    /* thumb.ns="thumb"; */
-    /* thumb.id=0; */
-    /* thumb.type=visualization_msgs::Marker::POINTS; */
-    /* thumb.action=visualization_msgs::Marker::ADD; */
-    /* thumb.scale.x = 0.005; */
-    /* thumb.scale.y = 0.005; */
-    /* for (size_t i=0; i<thumb_->size(); ++i) */
-    /* { */
-    /*     pt.x = thumb_->points[i].x; */
-    /*     pt.y = thumb_->points[i].y; */
-    /*     pt.z = thumb_->points[i].z; */
-    /*     std_msgs::ColorRGBA cl; */
-    /*     cl.r=1; */
-    /*     cl.a=1; */
-    /*     cl.g=0; */
-    /*     cl.b=0; */
-    /*     thumb.points.push_back(pt); */
-    /*     thumb.colors.push_back(cl); */
-    /* } */
-    /* thumb.lifetime=ros::Duration(1.0); */
-    /* marks_->markers.push_back(thumb); */
+    visualization_msgs::Marker adj;
+    adj.ns="Adjacency Graph";
+    adj.id=0;
+    adj.type=visualization_msgs::Marker::LINE_LIST;
+    adj.action=visualization_msgs::Marker::ADD;
+    adj.scale.x = 0.0005;
+    adj.color.b=1;
+    adj.color.r=1;
+    adj.color.a=1;
+    adj.lifetime = ros::Duration(1.0);
+
+    adjIterator label_it = adjacency.begin();
+    for ( ;label_it != adjacency.end(); )
+    {
+        uint32_t label = label_it->first;
+        SupervoxelPtr sv = supervoxels.at(label);
+    }
 }
 
 void  HoloFingers::segment()
 {
     if(!cloud_ || !nh_)
         return;
-    nh_->param<float>("pass", pass, 0.02);
-    pcl::octree::OctreePointCloudAdjacency<pcl::PointXYZRGB> octree(pass);
-    octree.setInputCloud(cloud_);
-    octree.addPointsFromInputCloud();
-    octree.computeVoxelAdjacencyGraph(graph);
+    nh_->param<float>("voxel_res", voxel_res, 0.01);
+    nh_->param<float>("seed_res", seed_res, 0.025);
+    pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal> ne;
+    ne.setInputCloud(cloud_);
+    ne.useSensorOriginAsViewPoint();
+    ne.setRadiusSearch(0.01);
+    pcl::PointCloud<pcl::Normal>::Ptr normal_cloud = boost::make_shared<pcl::PointCloud<pcl::Normal> >();
+    ne.compute(*normal_cloud);
+
+    pcl::SupervoxelClustering<pcl::PointXYZRGB> super(voxel_res,seed_res,true);
+    super.setInputCloud(cloud_);
+    super.setNormalCloud(normal_cloud);
+    super.setColorImportance(0.2);
+    super.setSpatialImportance(0.7);
+    super.setNormalImportance(0.5);
+
+    super.extract(supervoxels);
+    super.refineSupervoxels(2, supervoxels);
+    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr colored;
+    colored = super.getColoredCloud();
+    vx_cloud_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB> >();
+    pcl::copyPointCloud(*colored, *vx_cloud_);
+    super.getSupervoxelAdjacency(adjacency);
 }
 
 void HoloFingers::measure()

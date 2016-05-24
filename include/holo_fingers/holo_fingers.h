@@ -37,7 +37,8 @@
 #include <pcl/point_types.h>
 #include <pcl/common/common.h>
 #include <pcl/common/impl/common.hpp>
-#include <pcl/octree/octree_pointcloud_adjacency.h>
+#include <pcl/segmentation/supervoxel_clustering.h>
+#include <pcl/features/normal_3d.h>
 #include <pcl/common/centroid.h>
 #include <pcl_ros/point_cloud.h>
 #include <sensor_msgs/point_cloud_conversion.h>
@@ -79,19 +80,19 @@ namespace holo_fingers
         boost::shared_ptr<ros::NodeHandle> nh_;
         boost::shared_ptr<visualization_msgs::MarkerArray> marks_;
         ros::Subscriber sub_;
-        ros::Publisher pub_;
+        ros::Publisher pub_, pub_cloud;
         ros::ServiceServer srv_calib_;
         tf::TransformBroadcaster brcaster_;
         tf::TransformListener listener_;
 
         std::string topic_, frame_;
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_;
-        typedef pcl::octree::OctreePointCloudAdjacency<pcl::PointXYZRGB>::VoxelAdjacencyList AdjacencyList;
-        AdjacencyList graph;
-        typedef pcl::octree::OctreePointCloudAdjacency<pcl::PointXYZRGB>::VoxelID VertDesc;
-        typedef pcl::octree::OctreePointCloudAdjacency<pcl::PointXYZRGB>::EdgeID EdgeDesc;
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_, vx_cloud_;
+        std::multimap<uint32_t,uint32_t> adjacency;
+        typedef pcl::Supervoxel<pcl::PointXYZRGB>::Ptr SupervoxelPtr;
+        std::map<uint32_t, SupervoxelPtr > supervoxels;
+        typedef std::multimap<uint32_t,uint32_t>::iterator adjIterator;
         //Params
-        float pass;
+        float voxel_res, seed_res;
     };
 }
 #endif //_INCL_holo_fingers_H_
