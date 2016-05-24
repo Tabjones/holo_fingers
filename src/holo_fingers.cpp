@@ -144,6 +144,47 @@ void HoloFingers::createMarkers()
     }
     thumb.lifetime=ros::Duration(1.0);
     marks_->markers.push_back(thumb);
+    visualization_msgs::Marker dist_line;
+    dist_line.ns="LineDistance";
+    dist_line.id=0;
+    dist_line.type=visualization_msgs::Marker::LINE_STRIP;
+    dist_line.action=visualization_msgs::Marker::ADD;
+    dist_line.scale.x = 0.001;
+    pt.x = pt_index_.x;
+    pt.y = pt_index_.y;
+    pt.z = pt_index_.z;
+    std_msgs::ColorRGBA cl;
+    cl.r=0;
+    cl.a=1;
+    cl.g=1;
+    cl.b=1;
+    dist_line.points.push_back(pt);
+    dist_line.colors.push_back(cl);
+    pt.x = pt_thumb_.x;
+    pt.y = pt_thumb_.y;
+    pt.z = pt_thumb_.z;
+    dist_line.points.push_back(pt);
+    dist_line.colors.push_back(cl);
+    dist_line.color.a=1;
+    dist_line.color.g=1;
+    dist_line.color.b=1;
+    dist_line.lifetime=ros::Duration(1.0);
+    marks_->markers.push_back(dist_line);
+    visualization_msgs::Marker dist_text;
+    dist_text.ns="Distance";
+    dist_text.id=0;
+    dist_text.type=visualization_msgs::Marker::TEXT_VIEW_FACING;
+    dist_text.action=visualization_msgs::Marker::ADD;
+    dist_text.scale.z = 0.008;
+    dist_text.text = std::to_string(dist);
+    dist_text.color.a=1;
+    dist_text.color.g=1;
+    dist_text.color.b=1;
+    dist_text.lifetime=ros::Duration(1.0);
+    dist_text.pose.position.x = (pt_index_.x + pt_thumb_.x)*0.5;
+    dist_text.pose.position.y = (pt_index_.y + pt_thumb_.y)*0.5 -0.01;
+    dist_text.pose.position.z = (pt_index_.z + pt_thumb_.z)*0.5;
+    marks_->markers.push_back(dist_text);
 }
 
 void  HoloFingers::segment()
@@ -268,30 +309,30 @@ void  HoloFingers::segment()
 
 void HoloFingers::measure()
 {
-    /* Eigen::Vector4f min, max; */
-    /* pcl::getMinMax3D(*cloud_,min,max); */
-    /* pcl::PointCloud<pcl::PointXYZRGB>::Ptr tmp = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>(); */
-    /* pcl::PointCloud<pcl::PointXYZRGB>::Ptr fingers = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>(); */
-    /* pcl::PassThrough<pcl::PointXYZRGB> pass; */
-    /* pass.setFilterFieldName("y"); */
-    /* pass.setFilterLimits(max[1]-0.025, max[1]); */
-    /* pass.setInputCloud(cloud_); */
-    /* pass.filter(*tmp); */
-    /* pcl::getMinMax3D(*tmp,min,max); */
-    /* pass.setFilterFieldName("z"); */
-    /* pass.setFilterLimits(min[2], min[2]+0.02); */
-    /* pass.setInputCloud(tmp); */
-    /* pass.filter(*fingers); */
-    /* pcl::getMinMax3D(*fingers,min,max); */
-    /* index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>(); */
-    /* thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>(); */
-    /* pass.setFilterFieldName("x"); */
-    /* pass.setFilterLimits(min[0], min[0]+0.02); */
-    /* pass.setInputCloud(fingers); */
-    /* pass.filter(*index_); */
-    /* pass.setFilterLimits(max[0]-0.02, max[0]); */
-    /* pass.setInputCloud(fingers); */
-    /* pass.filter(*thumb_); */
+    if (!index_ || !thumb_)
+        return;
+    Eigen::Vector4f min, max;
+    pcl::getMinMax3D(*index_,min,max);
+    pcl::PointXYZRGB  q;
+    q.x = max[0];
+    q.y = (min[1]+max[1])*0.5;
+    q.z = (min[2]+max[2])*0.5;
+    pcl::search::KdTree<pcl::PointXYZRGB> tree;
+    tree.setInputCloud(index_);
+    std::vector<int> ki;
+    std::vector<float> kd;
+    tree.nearestKSearch(q,1,ki,kd);
+    pt_index_ = index_->points[ki[0]];
+    pcl::getMinMax3D(*thumb_,min,max);
+    q.x = min[0];
+    q.y = (min[1]+max[1])*0.5;
+    q.z = (min[2]+max[2])*0.5;
+    tree.setInputCloud(thumb_);
+    tree.nearestKSearch(q,1,ki,kd);
+    pt_thumb_ = thumb_->points[ki[0]];
+    dist = std::sqrt( std::pow(pt_index_.x - pt_thumb_.x, 2) +
+                      std::pow(pt_index_.y - pt_thumb_.y, 2) +
+                      std::pow(pt_index_.z - pt_thumb_.z, 2) );
 }
 
 void HoloFingers::cbCloud(const sensor_msgs::PointCloud2::ConstPtr &msg)

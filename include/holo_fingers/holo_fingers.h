@@ -86,6 +86,8 @@ namespace holo_fingers
 
         std::string topic_, frame_;
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_, index_, thumb_;
+        pcl::PointXYZRGB pt_index_, pt_thumb_;
+        float dist;
         //Params
         float pass;
     };
