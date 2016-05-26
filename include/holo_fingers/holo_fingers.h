@@ -76,6 +76,7 @@ namespace holo_fingers
         void segment();
         void measure();
         void createMarkers();
+        bool isOnTopOf(pcl::PointCloud<pcl::PointXYZRGB>::Ptr under, pcl::PointCloud<pcl::PointXYZRGB>::Ptr over);
         boost::shared_ptr<ros::NodeHandle> nh_;
         boost::shared_ptr<visualization_msgs::MarkerArray> marks_;
         ros::Subscriber sub_;

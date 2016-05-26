@@ -187,11 +187,28 @@ void HoloFingers::createMarkers()
     marks_->markers.push_back(dist_text);
 }
 
+bool
+HoloFingers::isOnTopOf(pcl::PointCloud<pcl::PointXYZRGB>::Ptr under, pcl::PointCloud<pcl::PointXYZRGB>::Ptr over)
+{
+    //is over directly on top of under ?
+    if (!under || !over)
+        return false;
+    Eigen::Vector4f umin, umax, omin, omax;
+    pcl::getMinMax3D(*under,umin,umax);
+    pcl::getMinMax3D(*over, omin,omax);
+    if ((omin[0] >= umin[0]-0.005 && omin[0] <= umin[0]+0.005) ||
+        (omax[0] >= umax[0]-0.005 && omax[0] <= umax[0]+0.005) ){
+        if (omax[1] >= umin[1]-0.005 )
+            return true;
+    }
+    return false;
+}
+
 void  HoloFingers::segment()
 {
     if(!cloud_ || !nh_)
         return;
-    nh_->param<float>("pass", pass, 0.015);
+    nh_->param<float>("pass", pass, 0.025);
     Eigen::Vector4f min, max, wmin, wmax;
     pcl::getMinMax3D(*cloud_,min,max);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr tmp = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
@@ -220,8 +237,8 @@ void  HoloFingers::segment()
             if(!tmp->empty() && (!index_ || !thumb_)){
                 pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
                 ec.setInputCloud(tmp);
-                ec.setClusterTolerance(0.004);
-                ec.setMinClusterSize(50);
+                ec.setClusterTolerance(0.005);
+                ec.setMinClusterSize(20);
                 std::vector<pcl::PointIndices> clusters;
                 ec.extract(clusters);
                 if (clusters.empty())
@@ -235,6 +252,8 @@ void  HoloFingers::segment()
                     else{
                         thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
                         pcl::copyPointCloud(*tmp, clusters[0], *thumb_);
+                        if (isOnTopOf(index_, thumb_))
+                            thumb_.reset();
                     }
                 }
                 else if (clusters.size()==2){
@@ -242,12 +261,24 @@ void  HoloFingers::segment()
                         thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
                         if (!index_)
                             pcl::copyPointCloud(*tmp, clusters[1], *thumb_);
-                        if (index_)
+                        if (index_){
                             pcl::copyPointCloud(*tmp, clusters[0], *thumb_);
+                            if (isOnTopOf(index_,thumb_)){
+                                pcl::copyPointCloud(*tmp, clusters[1], *thumb_);
+                                if (isOnTopOf(index_,thumb_))
+                                    thumb_.reset();
+                            }
+                        }
                     }
                     if(!index_){
                         index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
                         pcl::copyPointCloud(*tmp, clusters[0], *index_);
+                        if (isOnTopOf(index_,thumb_))
+                            thumb_.reset();
+                        if (isOnTopOf(thumb_,index_)){
+                            index_ = thumb_;
+                            thumb_.reset();
+                        }
                     }
                 }
                 else{
