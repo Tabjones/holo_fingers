@@ -102,23 +102,23 @@ void HoloFingers::createMarkers()
     zaxis.lifetime=ros::Duration(1.0);
     marks_->markers.push_back(zaxis);
 
-    visualization_msgs::Marker adj;
-    adj.ns="Adjacency Graph";
-    adj.id=0;
-    adj.type=visualization_msgs::Marker::LINE_LIST;
-    adj.action=visualization_msgs::Marker::ADD;
-    adj.scale.x = 0.0005;
-    adj.color.b=1;
-    adj.color.r=1;
-    adj.color.a=1;
-    adj.lifetime = ros::Duration(1.0);
+    /* visualization_msgs::Marker adj; */
+    /* adj.ns="Adjacency Graph"; */
+    /* adj.id=0; */
+    /* adj.type=visualization_msgs::Marker::LINE_LIST; */
+    /* adj.action=visualization_msgs::Marker::ADD; */
+    /* adj.scale.x = 0.0005; */
+    /* adj.color.b=1; */
+    /* adj.color.r=1; */
+    /* adj.color.a=1; */
+    /* adj.lifetime = ros::Duration(1.0); */
 
-    adjIterator label_it = adjacency.begin();
-    for ( ;label_it != adjacency.end(); )
-    {
-        uint32_t label = label_it->first;
-        SupervoxelPtr sv = supervoxels.at(label);
-    }
+    /* adjIterator label_it = adjacency.begin(); */
+    /* for ( ;label_it != adjacency.end(); ) */
+    /* { */
+    /*     uint32_t label = label_it->first; */
+    /*     SupervoxelPtr sv = supervoxels.at(label); */
+    /* } */
 }
 
 void  HoloFingers::segment()
@@ -126,7 +126,7 @@ void  HoloFingers::segment()
     if(!cloud_ || !nh_)
         return;
     nh_->param<float>("voxel_res", voxel_res, 0.01);
-    nh_->param<float>("seed_res", seed_res, 0.025);
+    nh_->param<float>("seed_res", seed_res, 0.03);
     pcl::NormalEstimation<pcl::PointXYZRGB, pcl::Normal> ne;
     ne.setInputCloud(cloud_);
     ne.useSensorOriginAsViewPoint();
@@ -182,7 +182,7 @@ void HoloFingers::cbCloud(const sensor_msgs::PointCloud2::ConstPtr &msg)
 {
     try
     {
-        cloud_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+        cloud_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB> >();
         pcl::fromROSMsg (*msg, *cloud_);
     }
     catch (...)
