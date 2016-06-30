@@ -34,10 +34,11 @@
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/crop_box.h>
 #include <pcl/search/kdtree.h>
+#include <std_msgs/Float64.h>
 
 namespace holo_fingers
 {
-HoloFingers::HoloFingers(const std::string name_space)
+HoloFingers::HoloFingers(const std::string name_space):mean_dist(0.), exp_dist(0.)
 {
     nh_ = boost::make_shared<ros::NodeHandle>(name_space);
     /* nh_->param<double>("cluster_tolerance", clus_tol_, 0.005); */
@@ -48,10 +49,15 @@ HoloFingers::HoloFingers(const std::string name_space)
     sub_ = nh_->subscribe(nh_->resolveName(topic_), 1, &HoloFingers::cbCloud, this);
     srv_calib_ = nh_->advertiseService("calibrate", &HoloFingers::cbCalib, this);
     pub_ = nh_->advertise<visualization_msgs::MarkerArray>("distance_markers", 1);
+    pub_dist = nh_->advertise<std_msgs::Float64>("distance", 10);
+    pub_mean = nh_->advertise<std_msgs::Float64>("mean_distance", 10);
+    pub_exp = nh_->advertise<std_msgs::Float64>("exp_smoothing_distance", 10);
     /* nh_->param<std::vector<double> >("translation", trasl, {0, 0, 0}); */
     /* nh_->param<std::vector<double> >("rotation", rot, {0, 0, 0, 1}); */
     marks_ = boost::make_shared<visualization_msgs::MarkerArray>();
     nh_->param<float>("pass", pass, 0.015);
+    nh_->param<float>("alpha", alpha, 0.3);
+    nh_->param<int>("window", window, 30);
 }
 
 void HoloFingers::publishMarkers()
@@ -66,6 +72,23 @@ void HoloFingers::publishMarkers()
             }
             pub_.publish(*marks_);
         }
+    if (!dist.empty()){
+        std_msgs::Float64 d;
+        d.data = dist.back();
+        pub_dist.publish(d);
+    }
+    if (mean_dist != 0.0){
+        std_msgs::Float64 dm;
+        dm.data = mean_dist;
+        pub_mean.publish(dm);
+        mean_dist = 0.0;
+    }
+    if (exp_dist != 0.){
+        std_msgs::Float64 de;
+        de.data = exp_dist;
+        pub_exp.publish(de);
+    }
+    cloud_.reset();
 }
 void HoloFingers::spinOnce()
 {
@@ -170,21 +193,23 @@ void HoloFingers::createMarkers()
     dist_line.color.b=1;
     dist_line.lifetime=ros::Duration(1.0);
     marks_->markers.push_back(dist_line);
-    visualization_msgs::Marker dist_text;
-    dist_text.ns="Distance";
-    dist_text.id=0;
-    dist_text.type=visualization_msgs::Marker::TEXT_VIEW_FACING;
-    dist_text.action=visualization_msgs::Marker::ADD;
-    dist_text.scale.z = 0.008;
-    dist_text.text = std::to_string(dist);
-    dist_text.color.a=1;
-    dist_text.color.g=1;
-    dist_text.color.b=1;
-    dist_text.lifetime=ros::Duration(1.0);
-    dist_text.pose.position.x = (pt_index_.x + pt_thumb_.x)*0.5;
-    dist_text.pose.position.y = (pt_index_.y + pt_thumb_.y)*0.5 -0.01;
-    dist_text.pose.position.z = (pt_index_.z + pt_thumb_.z)*0.5;
-    marks_->markers.push_back(dist_text);
+    if (mean_dist > 0.){
+        visualization_msgs::Marker dist_text;
+        dist_text.ns="Distance";
+        dist_text.id=0;
+        dist_text.type=visualization_msgs::Marker::TEXT_VIEW_FACING;
+        dist_text.action=visualization_msgs::Marker::ADD;
+        dist_text.scale.z = 0.008;
+        dist_text.text = std::to_string(mean_dist);
+        dist_text.color.a=1;
+        dist_text.color.g=1;
+        dist_text.color.b=1;
+        dist_text.lifetime=ros::Duration(1.0);
+        dist_text.pose.position.x = (pt_index_.x + pt_thumb_.x)*0.5;
+        dist_text.pose.position.y = (pt_index_.y + pt_thumb_.y)*0.5 -0.01;
+        dist_text.pose.position.z = (pt_index_.z + pt_thumb_.z)*0.5;
+        marks_->markers.push_back(dist_text);
+    }
 }
 
 bool
@@ -197,10 +222,8 @@ HoloFingers::isOnTopOf(pcl::PointCloud<pcl::PointXYZRGB>::Ptr under, pcl::PointC
     pcl::getMinMax3D(*under,umin,umax);
     pcl::getMinMax3D(*over, omin,omax);
     if ((omin[0] >= umin[0]-0.005 && omin[0] <= umin[0]+0.005) ||
-        (omax[0] >= umax[0]-0.005 && omax[0] <= umax[0]+0.005) ){
-        if (omax[1] >= umin[1]-0.005 )
+        (omax[0] >= umax[0]-0.005 && omax[0] <= umax[0]+0.005) )
             return true;
-    }
     return false;
 }
 
@@ -222,116 +245,109 @@ void  HoloFingers::segment()
     {
         wmin[1] = y - pass;
         wmax[1] = y;
-        for(float z=min[2]; z<=max[2]; z += pass)
-        {
-            wmin[2] = z;
-            wmax[2] = z + pass;
-            cb.setMin(wmin);
-            cb.setMax(wmax);
-            cb.setInputCloud(cloud_);
-            cb.filter(*tmp);
-            pcl::IndicesConstPtr indices = cb.getRemovedIndices();
-            pcl::PointCloud<pcl::PointXYZRGB>::Ptr leftover = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-            pcl::copyPointCloud(*cloud_, *indices, *leftover);
-            cloud_ = leftover;
-            if(!tmp->empty() && (!index_ || !thumb_)){
-                pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
-                ec.setInputCloud(tmp);
-                ec.setClusterTolerance(0.005);
-                ec.setMinClusterSize(20);
-                std::vector<pcl::PointIndices> clusters;
-                ec.extract(clusters);
-                if (clusters.empty())
-                    continue;
-                else if (clusters.size()==1){
-                    if(!index_){
-                        //temporary save this finger in index
-                        index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-                        pcl::copyPointCloud(*tmp, clusters[0], *index_);
-                    }
-                    else{
-                        thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-                        pcl::copyPointCloud(*tmp, clusters[0], *thumb_);
-                        if (isOnTopOf(index_, thumb_))
-                            thumb_.reset();
-                    }
-                }
-                else if (clusters.size()==2){
-                    if (!thumb_){
-                        thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-                        if (!index_)
-                            pcl::copyPointCloud(*tmp, clusters[1], *thumb_);
-                        if (index_){
-                            pcl::copyPointCloud(*tmp, clusters[0], *thumb_);
-                            if (isOnTopOf(index_,thumb_)){
-                                pcl::copyPointCloud(*tmp, clusters[1], *thumb_);
-                                if (isOnTopOf(index_,thumb_))
-                                    thumb_.reset();
-                            }
-                        }
-                    }
-                    if(!index_){
-                        index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-                        pcl::copyPointCloud(*tmp, clusters[0], *index_);
-                        if (isOnTopOf(index_,thumb_))
-                            thumb_.reset();
-                        if (isOnTopOf(thumb_,index_)){
-                            index_ = thumb_;
-                            thumb_.reset();
-                        }
-                    }
+        cb.setMin(wmin);
+        cb.setMax(wmax);
+        cb.setInputCloud(cloud_);
+        cb.filter(*tmp);
+        pcl::IndicesConstPtr indices = cb.getRemovedIndices();
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr leftover = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+        pcl::copyPointCloud(*cloud_, *indices, *leftover);
+        cloud_ = leftover;
+        if(!tmp->empty() && (!index_ || !thumb_)){
+            pcl::EuclideanClusterExtraction<pcl::PointXYZRGB> ec;
+            ec.setInputCloud(tmp);
+            ec.setClusterTolerance(0.005);
+            ec.setMinClusterSize(10);
+            std::vector<pcl::PointIndices> clusters;
+            ec.extract(clusters);
+            if (clusters.empty())
+                continue;
+            else if (clusters.size()==1){
+                if(!index_){
+                    //temporary save this finger in index
+                    index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                    pcl::copyPointCloud(*tmp, clusters[0], *index_);
                 }
                 else{
-                    ROS_WARN("[HoloFingers::%s]\tFound more then two fingers... Change hand configuration!",__func__);
-                    ROS_WARN("[HoloFingers::%s]\tKeeping the largest two",__func__);
-                    size_t f(0), t(0);
-                    if (clusters[0].indices.size() > clusters[1].indices.size()){
-                        f = 0;
-                        t = 1;
-                    }
-                    else{
-                        f=1;
-                        t=0;
-                    }
-                    for(size_t i=2; i<clusters.size(); ++i)
-                    {
-                        if(clusters[i].indices.size() >= clusters[f].indices.size()){
-                            t = f;
-                            f = i;
+                    thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                    pcl::copyPointCloud(*tmp, clusters[0], *thumb_);
+                    if (isOnTopOf(index_, thumb_))
+                        thumb_.reset();
+                }
+            }
+            else if (clusters.size()==2){
+                if (!thumb_){
+                    thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                    if (!index_)
+                        pcl::copyPointCloud(*tmp, clusters[1], *thumb_);
+                    if (index_){
+                        pcl::copyPointCloud(*tmp, clusters[0], *thumb_);
+                        if (isOnTopOf(index_,thumb_)){
+                            pcl::copyPointCloud(*tmp, clusters[1], *thumb_);
+                            if (isOnTopOf(index_,thumb_))
+                                thumb_.reset();
                         }
-                        else if(clusters[i].indices.size() > clusters[t].indices.size())
-                            t = i;
-                    }
-                    if(!thumb_){
-                        thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-                        if (!index_)
-                            pcl::copyPointCloud(*tmp, clusters[t], *thumb_);
-                        if (index_)
-                            pcl::copyPointCloud(*tmp, clusters[f], *thumb_);
-                    }
-                    if(!index_){
-                        index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-                        pcl::copyPointCloud(*tmp, clusters[f], *index_);
                     }
                 }
-                if (index_ && thumb_){
-                    //check if fingers need to be swapped
-                    Eigen::Vector4f tmin, tmax;
-                    pcl::getMinMax3D(*index_,tmin,tmax);
-                    float index_x = tmin[0];
-                    pcl::getMinMax3D(*thumb_,tmin,tmax);
-                    if (index_x > tmin[0]){
-                        //swap
-                        pcl::PointCloud<pcl::PointXYZRGB>::Ptr tmp2 =
-                            boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
-                        tmp2 = index_;
+                if(!index_){
+                    index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                    pcl::copyPointCloud(*tmp, clusters[0], *index_);
+                    if (isOnTopOf(index_,thumb_))
+                        thumb_.reset();
+                    if (isOnTopOf(thumb_,index_)){
                         index_ = thumb_;
-                        thumb_ = tmp2;
+                        thumb_.reset();
                     }
                 }
             }
-            if (thumb_ && index_)
-                break;
+            else{
+                ROS_WARN("[HoloFingers::%s]\tFound more then two fingers... Change hand configuration!",__func__);
+                ROS_WARN("[HoloFingers::%s]\tKeeping the largest two",__func__);
+                size_t f(0), t(0);
+                if (clusters[0].indices.size() > clusters[1].indices.size()){
+                    f = 0;
+                    t = 1;
+                }
+                else{
+                    f=1;
+                    t=0;
+                }
+                for(size_t i=2; i<clusters.size(); ++i)
+                {
+                    if(clusters[i].indices.size() >= clusters[f].indices.size()){
+                        t = f;
+                        f = i;
+                    }
+                    else if(clusters[i].indices.size() > clusters[t].indices.size())
+                        t = i;
+                }
+                if(!thumb_){
+                    thumb_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                    if (!index_)
+                        pcl::copyPointCloud(*tmp, clusters[t], *thumb_);
+                    if (index_)
+                        pcl::copyPointCloud(*tmp, clusters[f], *thumb_);
+                }
+                if(!index_){
+                    index_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                    pcl::copyPointCloud(*tmp, clusters[f], *index_);
+                }
+            }
+            if (index_ && thumb_){
+                //check if fingers need to be swapped
+                Eigen::Vector4f tmin, tmax;
+                pcl::getMinMax3D(*index_,tmin,tmax);
+                float index_x = tmin[0];
+                pcl::getMinMax3D(*thumb_,tmin,tmax);
+                if (index_x > tmin[0]){
+                    //swap
+                    pcl::PointCloud<pcl::PointXYZRGB>::Ptr tmp2 =
+                        boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();
+                    tmp2 = index_;
+                    index_ = thumb_;
+                    thumb_ = tmp2;
+                }
+            }
         }
         if (thumb_ && index_)
             break;
@@ -342,6 +358,8 @@ void HoloFingers::measure()
 {
     if (!index_ || !thumb_)
         return;
+    nh_->param<float>("alpha", alpha, 0.3);
+    nh_->param<int>("window", window, 30);
     Eigen::Vector4f min, max;
     pcl::getMinMax3D(*index_,min,max);
     pcl::PointXYZRGB  q;
@@ -361,13 +379,24 @@ void HoloFingers::measure()
     tree.setInputCloud(thumb_);
     tree.nearestKSearch(q,1,ki,kd);
     pt_thumb_ = thumb_->points[ki[0]];
-    dist = std::sqrt( std::pow(pt_index_.x - pt_thumb_.x, 2) +
-                      std::pow(pt_index_.y - pt_thumb_.y, 2) +
-                      std::pow(pt_index_.z - pt_thumb_.z, 2) );
+    dist.push_back(std::sqrt( std::pow(pt_index_.x - pt_thumb_.x, 2) +
+                   std::pow(pt_index_.y - pt_thumb_.y, 2) +
+                   std::pow(pt_index_.z - pt_thumb_.z, 2) ) );
+    while(dist.size() > window)
+        dist.pop_front();
+    if (dist.size() ==  window){
+        mean_dist = 0;
+        for (std::deque<double>::iterator it = dist.begin(); it!= dist.end(); ++it)
+            mean_dist += *it;
+        mean_dist/=window;
+    }
+    exp_dist = alpha*dist.back() + (1-alpha)*exp_dist;
 }
 
 void HoloFingers::cbCloud(const sensor_msgs::PointCloud2::ConstPtr &msg)
 {
+    if (cloud_)
+        return;
     try
     {
         cloud_ = boost::make_shared<pcl::PointCloud<pcl::PointXYZRGB>>();

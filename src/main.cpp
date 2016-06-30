@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
     ros::init(argc, argv, "holo_fingers");
     hf::HoloFingers node("holo_fingers");
     //Try to go at 50hz
-    ros::Rate rate(10);
+    ros::Rate rate(50);
     while (ros::ok())
     {
         node.spinOnce();

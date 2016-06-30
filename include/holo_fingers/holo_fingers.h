@@ -51,6 +51,7 @@
 #include <holo_fingers/calibrate.h>
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
+#include <deque>
 
 namespace holo_fingers
 {
@@ -81,6 +82,9 @@ namespace holo_fingers
         boost::shared_ptr<visualization_msgs::MarkerArray> marks_;
         ros::Subscriber sub_;
         ros::Publisher pub_;
+        ros::Publisher pub_dist;
+        ros::Publisher pub_mean;
+        ros::Publisher pub_exp;
         ros::ServiceServer srv_calib_;
         tf::TransformBroadcaster brcaster_;
         tf::TransformListener listener_;
@@ -88,9 +92,13 @@ namespace holo_fingers
         std::string topic_, frame_;
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_, index_, thumb_;
         pcl::PointXYZRGB pt_index_, pt_thumb_;
-        float dist;
+        std::deque<double> dist;
+        double mean_dist;
+        double exp_dist;
         //Params
+        int window;
         float pass;
+        float alpha;
     };
 }
 #endif //_INCL_holo_fingers_H_
